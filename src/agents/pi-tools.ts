@@ -177,7 +177,11 @@ function cleanSchemaForGemini(schema: unknown): unknown {
       cleaned[key] = value.map((v) => cleanSchemaForGemini(v));
     } else if (key === "allOf" && Array.isArray(value)) {
       cleaned[key] = value.map((v) => cleanSchemaForGemini(v));
-    } else if (key === "additionalProperties" && value && typeof value === "object") {
+    } else if (
+      key === "additionalProperties" &&
+      value &&
+      typeof value === "object"
+    ) {
       cleaned[key] = cleanSchemaForGemini(value);
     } else {
       cleaned[key] = value;
