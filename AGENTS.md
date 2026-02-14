@@ -182,3 +182,45 @@
 - Publish: `npm publish --access public --otp="<otp>"` (run from the package dir).
 - Verify without local npmrc side effects: `npm view <pkg> version --userconfig "$(mktemp)"`.
 - Kill the tmux session after publish.
+
+## Fork: vabole/openclaw (Personal Patches)
+
+This is a personal fork. The `personal` branch carries custom patches on top of
+upstream `openclaw/openclaw` main. It is rebased on upstream/main nightly by a
+sync script.
+
+### Workflow for new changes
+
+1. **Before starting any work, merge upstream/main first.** This is a very
+   active repo and `personal` drifts quickly:
+   `git fetch upstream && git merge upstream/main`
+2. **Always work on the `personal` branch** (not `main`). Main tracks upstream
+   verbatim — never commit directly to it.
+3. **Validate with `pnpm build`** before committing. The gateway runs from `dist/`.
+4. After committing, push to `origin personal`. Do NOT create PRs against
+   upstream unless explicitly asked — these patches are for personal use.
+
+### Current custom patches on `personal`
+
+- `feat(slack): add native text streaming support` — Slack Agents & AI Apps
+  streaming API (chat.startStream/appendStream/stopStream) behind
+  `channels.slack.streaming: true`
+- `feat: expose download and waitForDownload actions in browser agent tool` —
+  browser tool download/waitForDownload actions (PR #12378 upstream, not yet merged)
+
+### Rebase on upstream
+
+The nightly sync script (`~/.openclaw/bin/sync-openclaw-main.sh`) updates
+`main` from upstream. To pick up those updates on `personal`:
+
+```sh
+git fetch upstream && git merge upstream/main
+# resolve conflicts if any, then push
+git push origin personal
+```
+
+### When upstream ships a feature we carry
+
+If upstream merges a feature that duplicates one of our patches (e.g., Slack
+streaming), the patch becomes a no-op — just update this section to note it.
+If there are conflicts during merge, resolve by taking upstream's version.
