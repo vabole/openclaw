@@ -13,6 +13,9 @@ const slackTestState: {
   replyMock: Mock<(...args: unknown[]) => unknown>;
   updateLastRouteMock: Mock<(...args: unknown[]) => unknown>;
   reactMock: Mock<(...args: unknown[]) => unknown>;
+  chatStreamMock: Mock<(...args: unknown[]) => unknown>;
+  chatStreamAppendMock: Mock<(...args: unknown[]) => Promise<unknown>>;
+  chatStreamStopMock: Mock<(...args: unknown[]) => Promise<unknown>>;
   readAllowFromStoreMock: Mock<(...args: unknown[]) => Promise<unknown>>;
   upsertPairingRequestMock: Mock<(...args: unknown[]) => Promise<unknown>>;
 } = vi.hoisted(() => ({
@@ -21,6 +24,9 @@ const slackTestState: {
   replyMock: vi.fn(),
   updateLastRouteMock: vi.fn(),
   reactMock: vi.fn(),
+  chatStreamMock: vi.fn(),
+  chatStreamAppendMock: vi.fn(),
+  chatStreamStopMock: vi.fn(),
   readAllowFromStoreMock: vi.fn(),
   upsertPairingRequestMock: vi.fn(),
 }));
@@ -119,6 +125,12 @@ export function resetSlackTestState(config: Record<string, unknown> = defaultSla
   slackTestState.replyMock.mockReset();
   slackTestState.updateLastRouteMock.mockReset();
   slackTestState.reactMock.mockReset();
+  slackTestState.chatStreamAppendMock.mockReset().mockResolvedValue({ ok: true });
+  slackTestState.chatStreamStopMock.mockReset().mockResolvedValue({ ok: true });
+  slackTestState.chatStreamMock.mockReset().mockImplementation(() => ({
+    append: (...args: unknown[]) => slackTestState.chatStreamAppendMock(...args),
+    stop: (...args: unknown[]) => slackTestState.chatStreamStopMock(...args),
+  }));
   slackTestState.readAllowFromStoreMock.mockReset().mockResolvedValue([]);
   slackTestState.upsertPairingRequestMock.mockReset().mockResolvedValue({
     code: "PAIRCODE",
@@ -188,6 +200,7 @@ vi.mock("@slack/bolt", () => {
         setStatus: vi.fn().mockResolvedValue({ ok: true }),
       },
     },
+    chatStream: (...args: unknown[]) => slackTestState.chatStreamMock(...args),
     reactions: {
       add: (...args: unknown[]) => slackTestState.reactMock(...args),
     },

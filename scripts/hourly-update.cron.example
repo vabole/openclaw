@@ -1,0 +1,28 @@
+# Example system crontab for OpenClaw hourly source updates.
+# Install with: crontab -e
+#
+# Required:
+# - OPENCLAW_NOTIFY_TARGET should be your Slack destination (e.g. channel:C01234567)
+# Optional:
+# - OPENCLAW_NOTIFY_ACCOUNT for multi-account setups
+# - OPENCLAW_NOTIFY_THREAD_ID to keep all notices in a Slack thread
+# - OPENCLAW_NOTIFY_ON_NO_CHANGE=0 to keep successful no-op runs in logs only
+# - OPENCLAW_APPLY_ON_SUCCESS=1 to restart gateway after changed successful updates
+# - OPENCLAW_SYNC_ORIGIN_ON_SUCCESS=1 to auto-sync local main to origin/main after successful updates
+# - OPENCLAW_SYNC_REMOTE / OPENCLAW_SYNC_BRANCH to override push target
+# - OPENCLAW_SYNC_FORCE_WITH_LEASE=1 to mirror local main even when remote diverged
+# - OPENCLAW_NODE_BIN when cron PATH does not include node (example: /opt/homebrew/bin/node)
+
+OPENCLAW_NOTIFY_CHANNEL=slack
+OPENCLAW_NOTIFY_TARGET=channel:C0AF04B7J2Z
+OPENCLAW_NOTIFY_ACCOUNT=default
+# OPENCLAW_NOTIFY_THREAD_ID=1736299754.009400
+# OPENCLAW_NOTIFY_ON_NO_CHANGE=0
+# OPENCLAW_APPLY_ON_SUCCESS=1
+# OPENCLAW_SYNC_ORIGIN_ON_SUCCESS=1
+# OPENCLAW_SYNC_REMOTE=origin
+# OPENCLAW_SYNC_BRANCH=main
+# OPENCLAW_SYNC_FORCE_WITH_LEASE=1
+# OPENCLAW_NODE_BIN=/opt/homebrew/bin/node
+
+0 * * * * "${HOME}/repos/openclaw/scripts/hourly-update.sh" >> "${HOME}/.openclaw/logs/hourly-update-cron.log" 2>&1
