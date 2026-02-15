@@ -161,6 +161,14 @@ describe("tts", () => {
       expect(output.extension).toBe(".mp3");
       expect(output.voiceCompatible).toBe(false);
     });
+
+    it("marks BlueBubbles MP3 output as voice-compatible", () => {
+      const output = resolveOutputFormat("bluebubbles");
+      expect(output.openai).toBe("mp3");
+      expect(output.elevenlabs).toBe("mp3_44100_128");
+      expect(output.extension).toBe(".mp3");
+      expect(output.voiceCompatible).toBe(true);
+    });
   });
 
   describe("resolveEdgeOutputFormat", () => {
@@ -525,6 +533,58 @@ describe("tts", () => {
       });
 
       expect(result.mediaUrl).toBeDefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      globalThis.fetch = originalFetch;
+      process.env.OPENCLAW_TTS_PREFS = prevPrefs;
+    });
+
+    it("marks bluebubbles TTS replies for voice-bubble delivery", async () => {
+      const prevPrefs = process.env.OPENCLAW_TTS_PREFS;
+      process.env.OPENCLAW_TTS_PREFS = `/tmp/tts-test-${Date.now()}.json`;
+      const originalFetch = globalThis.fetch;
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(1),
+      }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await maybeApplyTtsToPayload({
+        payload: { text: "Hello world from BlueBubbles" },
+        cfg: baseCfg,
+        kind: "final",
+        inboundAudio: true,
+        channel: "bluebubbles",
+      });
+
+      expect(result.mediaUrl).toBeDefined();
+      expect(result.audioAsVoice).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      globalThis.fetch = originalFetch;
+      process.env.OPENCLAW_TTS_PREFS = prevPrefs;
+    });
+
+    it("does not force voice-bubble mode on non-voice channels", async () => {
+      const prevPrefs = process.env.OPENCLAW_TTS_PREFS;
+      process.env.OPENCLAW_TTS_PREFS = `/tmp/tts-test-${Date.now()}.json`;
+      const originalFetch = globalThis.fetch;
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(1),
+      }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await maybeApplyTtsToPayload({
+        payload: { text: "Hello world from Slack" },
+        cfg: baseCfg,
+        kind: "final",
+        inboundAudio: true,
+        channel: "slack",
+      });
+
+      expect(result.mediaUrl).toBeDefined();
+      expect(result.audioAsVoice).not.toBe(true);
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
       globalThis.fetch = originalFetch;

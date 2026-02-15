@@ -764,18 +764,49 @@ export async function processMessage(
             const text = sanitizeReplyDirectiveText(
               core.channel.text.convertMarkdownTables(payload.text ?? "", tableMode),
             );
+            const wantsVoiceMemo = payload.audioAsVoice === true;
             let first = true;
             for (const mediaUrl of mediaList) {
               const caption = first ? text : undefined;
               first = false;
-              const result = await sendBlueBubblesMedia({
+              const sendParams = {
                 cfg: config,
                 to: outboundTarget,
                 mediaUrl,
                 caption: caption ?? undefined,
                 replyToId: replyToMessageGuid || null,
                 accountId: account.accountId,
-              });
+              } as const;
+              let result;
+              if (wantsVoiceMemo) {
+                try {
+                  result = await sendBlueBubblesMedia({
+                    ...sendParams,
+                    asVoice: true,
+                  });
+                } catch (err) {
+                  const errorText = err instanceof Error ? err.message : String(err);
+                  // Graceful fallback: if media isn't MP3/CAF-compatible for native voice memos,
+                  // retry as a regular attachment instead of dropping the reply.
+                  if (!/voice messages require/i.test(errorText)) {
+                    throw err;
+                  }
+                  logVerbose(
+                    core,
+                    runtime,
+                    `voice memo fallback for media=${mediaUrl} err=${errorText}`,
+                  );
+                  result = await sendBlueBubblesMedia({
+                    ...sendParams,
+                    asVoice: false,
+                  });
+                }
+              } else {
+                result = await sendBlueBubblesMedia({
+                  ...sendParams,
+                  asVoice: false,
+                });
+              }
               const cachedBody = (caption ?? "").trim() || "<media:attachment>";
               maybeEnqueueOutboundMessageId(result.messageId, cachedBody);
               sentMessage = true;

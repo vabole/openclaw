@@ -79,6 +79,11 @@ const DEFAULT_OUTPUT = {
   voiceCompatible: false,
 };
 
+const BLUEBUBBLES_OUTPUT = {
+  ...DEFAULT_OUTPUT,
+  voiceCompatible: true,
+};
+
 const TELEPHONY_OUTPUT = {
   openai: { format: "pcm" as const, sampleRate: 24000 },
   elevenlabs: { format: "pcm_22050", sampleRate: 22050 },
@@ -482,11 +487,26 @@ function resolveOutputFormat(channelId?: string | null) {
   if (channelId === "telegram") {
     return TELEGRAM_OUTPUT;
   }
+  if (channelId === "bluebubbles") {
+    return BLUEBUBBLES_OUTPUT;
+  }
   return DEFAULT_OUTPUT;
 }
 
 function resolveChannelId(channel: string | undefined): ChannelId | null {
-  return channel ? normalizeChannelId(channel) : null;
+  const raw = channel?.trim();
+  if (!raw) {
+    return null;
+  }
+  try {
+    const normalized = normalizeChannelId(raw);
+    if (normalized) {
+      return normalized;
+    }
+  } catch {
+    // Plugin registry may be unavailable in lightweight contexts (e.g., isolated tests).
+  }
+  return raw.toLowerCase() as ChannelId;
 }
 
 function resolveEdgeOutputFormat(config: ResolvedTtsConfig): string {
@@ -907,7 +927,8 @@ export async function maybeApplyTtsToPayload(params: {
     };
 
     const channelId = resolveChannelId(params.channel);
-    const shouldVoice = channelId === "telegram" && result.voiceCompatible === true;
+    const supportsVoiceBubble = channelId === "telegram" || channelId === "bluebubbles";
+    const shouldVoice = supportsVoiceBubble && result.voiceCompatible === true;
     const finalPayload = {
       ...nextPayload,
       mediaUrl: result.audioPath,

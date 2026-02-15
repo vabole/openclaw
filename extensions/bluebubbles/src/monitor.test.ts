@@ -30,6 +30,10 @@ vi.mock("./attachments.js", () => ({
   }),
 }));
 
+vi.mock("./media-send.js", () => ({
+  sendBlueBubblesMedia: vi.fn().mockResolvedValue({ messageId: "media-123" }),
+}));
+
 vi.mock("./reactions.js", async () => {
   const actual = await vi.importActual<typeof import("./reactions.js")>("./reactions.js");
   return {
@@ -2424,6 +2428,122 @@ describe("BlueBubbles webhook monitor", () => {
         'Assistant sent "replying now" [message_id:2]',
         expect.objectContaining({
           sessionKey: "agent:main:bluebubbles:dm:+15551234567",
+        }),
+      );
+    });
+
+    it("propagates audioAsVoice for outbound media replies", async () => {
+      const { sendBlueBubblesMedia } = await import("./media-send.js");
+      vi.mocked(sendBlueBubblesMedia).mockClear();
+
+      mockDispatchReplyWithBufferedBlockDispatcher.mockImplementationOnce(async (params) => {
+        await params.dispatcherOptions.deliver(
+          { mediaUrl: "/tmp/voice.mp3", audioAsVoice: true },
+          { kind: "final" },
+        );
+      });
+
+      const account = createMockAccount();
+      const config: OpenClawConfig = {};
+      const core = createMockRuntime();
+      setBlueBubblesRuntime(core);
+
+      unregister = registerBlueBubblesWebhookTarget({
+        account,
+        config,
+        runtime: { log: vi.fn(), error: vi.fn() },
+        core,
+        path: "/bluebubbles-webhook",
+      });
+
+      const payload = {
+        type: "new-message",
+        data: {
+          text: "voice please",
+          handle: { address: "+15551234567" },
+          isGroup: false,
+          isFromMe: false,
+          guid: "msg-voice-1",
+          chatGuid: "iMessage;-;+15551234567",
+          date: Date.now(),
+        },
+      };
+
+      const req = createMockRequest("POST", "/bluebubbles-webhook", payload);
+      const res = createMockResponse();
+
+      await handleBlueBubblesWebhookRequest(req, res);
+      await flushAsync();
+
+      expect(sendBlueBubblesMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mediaUrl: "/tmp/voice.mp3",
+          asVoice: true,
+        }),
+      );
+    });
+
+    it("falls back to regular attachment when voice memo format is unsupported", async () => {
+      const { sendBlueBubblesMedia } = await import("./media-send.js");
+      vi.mocked(sendBlueBubblesMedia).mockClear();
+      vi.mocked(sendBlueBubblesMedia)
+        .mockRejectedValueOnce(
+          new Error(
+            "BlueBubbles voice messages require mp3 or caf audio (convert before sending).",
+          ),
+        )
+        .mockResolvedValueOnce({ messageId: "media-fallback-1" });
+
+      mockDispatchReplyWithBufferedBlockDispatcher.mockImplementationOnce(async (params) => {
+        await params.dispatcherOptions.deliver(
+          { mediaUrl: "/tmp/voice.wav", audioAsVoice: true },
+          { kind: "final" },
+        );
+      });
+
+      const account = createMockAccount();
+      const config: OpenClawConfig = {};
+      const core = createMockRuntime();
+      setBlueBubblesRuntime(core);
+
+      unregister = registerBlueBubblesWebhookTarget({
+        account,
+        config,
+        runtime: { log: vi.fn(), error: vi.fn() },
+        core,
+        path: "/bluebubbles-webhook",
+      });
+
+      const payload = {
+        type: "new-message",
+        data: {
+          text: "voice fallback",
+          handle: { address: "+15551234567" },
+          isGroup: false,
+          isFromMe: false,
+          guid: "msg-voice-2",
+          chatGuid: "iMessage;-;+15551234567",
+          date: Date.now(),
+        },
+      };
+
+      const req = createMockRequest("POST", "/bluebubbles-webhook", payload);
+      const res = createMockResponse();
+
+      await handleBlueBubblesWebhookRequest(req, res);
+      await flushAsync();
+
+      expect(sendBlueBubblesMedia).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(sendBlueBubblesMedia).mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          mediaUrl: "/tmp/voice.wav",
+          asVoice: true,
+        }),
+      );
+      expect(vi.mocked(sendBlueBubblesMedia).mock.calls[1]?.[0]).toEqual(
+        expect.objectContaining({
+          mediaUrl: "/tmp/voice.wav",
+          asVoice: false,
         }),
       );
     });
