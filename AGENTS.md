@@ -172,6 +172,11 @@
 - Voice wake forwarding tips:
   - Command template should stay `openclaw-mac agent --message "${text}" --thinking low`; `VoiceWakeForwarder` already shell-escapes `${text}`. Don’t add extra quotes.
   - launchd PATH is minimal; ensure the app’s launch agent PATH includes standard system paths plus your pnpm bin (typically `$HOME/Library/pnpm`) so `pnpm`/`openclaw` binaries resolve when invoked via `openclaw-mac`.
+- Local source-update workflow: keep required local gateway behavior committed on `main` (not only on side branches) so `openclaw update` / `scripts/hourly-update.sh` can carry it forward via rebase.
+- Local hourly update notifications: system cron runs `scripts/hourly-update.sh`; route notices to Slack `#claw-updates` via `OPENCLAW_NOTIFY_TARGET=channel:C0AF04B7J2Z` (account `default`, no thread override unless explicitly requested, and keep `OPENCLAW_NOTIFY_ON_NO_CHANGE=0`).
+- Local hourly update git sync: keep `OPENCLAW_SYNC_ORIGIN_ON_SUCCESS=1` so successful update runs mirror local `main` to `origin/main` (push-only; no rebase on origin). Keep `OPENCLAW_SYNC_FORCE_WITH_LEASE=1` to resolve remote divergence safely without SHA-churn loops.
+- Local source-update conflict policy: if hourly update fails (including conflicts/timeouts), keep the running gateway up, notify Slack `#claw-updates`, resolve on `main`, then rerun `scripts/hourly-update.sh`.
+- Local git sync policy for this repo: after agent-created commits for requested changes, push `origin main` immediately unless the user explicitly says not to.
 - For manual `openclaw message send` messages that include `!`, use the heredoc pattern noted below to avoid the Bash tool’s escaping.
 - Release guardrails: do not change version numbers without operator’s explicit consent; always ask permission before running any npm publish/release step.
 
