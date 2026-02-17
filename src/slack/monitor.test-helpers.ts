@@ -11,6 +11,9 @@ type SlackTestState = {
   config: Record<string, unknown>;
   sendMock: Mock<(...args: unknown[]) => Promise<unknown>>;
   replyMock: Mock<(...args: unknown[]) => unknown>;
+  chatStreamMock: Mock<(...args: unknown[]) => unknown>;
+  chatStreamAppendMock: Mock<(...args: unknown[]) => Promise<unknown>>;
+  chatStreamStopMock: Mock<(...args: unknown[]) => Promise<unknown>>;
   updateLastRouteMock: Mock<(...args: unknown[]) => unknown>;
   reactMock: Mock<(...args: unknown[]) => unknown>;
   readAllowFromStoreMock: Mock<(...args: unknown[]) => Promise<unknown>>;
@@ -21,6 +24,9 @@ const slackTestState: SlackTestState = vi.hoisted(() => ({
   config: {} as Record<string, unknown>,
   sendMock: vi.fn(),
   replyMock: vi.fn(),
+  chatStreamMock: vi.fn(),
+  chatStreamAppendMock: vi.fn(),
+  chatStreamStopMock: vi.fn(),
   updateLastRouteMock: vi.fn(),
   reactMock: vi.fn(),
   readAllowFromStoreMock: vi.fn(),
@@ -31,6 +37,7 @@ export const getSlackTestState = (): SlackTestState => slackTestState;
 
 type SlackClient = {
   auth: { test: Mock<(...args: unknown[]) => Promise<Record<string, unknown>>> };
+  chatStream: Mock<(...args: unknown[]) => unknown>;
   conversations: {
     info: Mock<(...args: unknown[]) => Promise<Record<string, unknown>>>;
     replies: Mock<(...args: unknown[]) => Promise<Record<string, unknown>>>;
@@ -138,6 +145,12 @@ export function resetSlackTestState(config: Record<string, unknown> = defaultSla
   slackTestState.config = config;
   slackTestState.sendMock.mockReset().mockResolvedValue(undefined);
   slackTestState.replyMock.mockReset();
+  slackTestState.chatStreamAppendMock.mockReset().mockResolvedValue({ ok: true });
+  slackTestState.chatStreamStopMock.mockReset().mockResolvedValue({ ok: true });
+  slackTestState.chatStreamMock.mockReset().mockImplementation(() => ({
+    append: (...args: unknown[]) => slackTestState.chatStreamAppendMock(...args),
+    stop: (...args: unknown[]) => slackTestState.chatStreamStopMock(...args),
+  }));
   slackTestState.updateLastRouteMock.mockReset();
   slackTestState.reactMock.mockReset();
   slackTestState.readAllowFromStoreMock.mockReset().mockResolvedValue([]);
@@ -193,6 +206,7 @@ vi.mock("@slack/bolt", () => {
   (globalThis as { __slackHandlers?: typeof handlers }).__slackHandlers = handlers;
   const client = {
     auth: { test: vi.fn().mockResolvedValue({ user_id: "bot-user" }) },
+    chatStream: (...args: unknown[]) => slackTestState.chatStreamMock(...args),
     conversations: {
       info: vi.fn().mockResolvedValue({
         channel: { name: "dm", is_im: true },
