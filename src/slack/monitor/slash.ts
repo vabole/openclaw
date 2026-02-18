@@ -683,22 +683,47 @@ export async function registerSlackMonitorSlashCommands(params: {
     if (!registry) {
       throw new Error("Missing commands registry for native Slack commands.");
     }
+    const registrations: Array<{
+      commandName: string;
+      commandDefinition?: ChatCommandDefinition;
+    }> = [];
+    const seenCommandNames = new Set<string>();
     for (const command of nativeCommands) {
+      const commandDefinition = registry.findCommandByNativeName(command.name, "slack");
+      const names = new Set<string>([command.name]);
+      if (commandDefinition?.textAliases) {
+        for (const alias of commandDefinition.textAliases) {
+          const normalized = alias.trim().replace(/^\/+/, "");
+          // Slack command names must be short slug-like strings.
+          if (!normalized || !/^[a-z0-9_-]{1,32}$/i.test(normalized)) {
+            continue;
+          }
+          names.add(normalized);
+        }
+      }
+      for (const commandName of names) {
+        const key = commandName.toLowerCase();
+        if (seenCommandNames.has(key)) {
+          continue;
+        }
+        seenCommandNames.add(key);
+        registrations.push({ commandName, commandDefinition });
+      }
+    }
+    for (const registration of registrations) {
       ctx.app.command(
-        `/${command.name}`,
+        `/${registration.commandName}`,
         async ({ command: cmd, ack, respond }: SlackCommandMiddlewareArgs) => {
-          const commandDefinition = registry.findCommandByNativeName(command.name, "slack");
+          const commandDefinition =
+            registration.commandDefinition ??
+            registry.findCommandByNativeName(registration.commandName, "slack");
           const rawText = cmd.text?.trim() ?? "";
           const commandArgs = commandDefinition
             ? registry.parseCommandArgs(commandDefinition, rawText)
             : rawText
               ? ({ raw: rawText } satisfies CommandArgs)
               : undefined;
-          const prompt = commandDefinition
-            ? registry.buildCommandTextFromArgs(commandDefinition, commandArgs)
-            : rawText
-              ? `/${command.name} ${rawText}`
-              : `/${command.name}`;
+          const prompt = rawText ? `/${cmd.command} ${rawText}` : `/${cmd.command}`;
           await handleSlashCommand({
             command: cmd,
             ack,
@@ -731,21 +756,19 @@ export async function registerSlackMonitorSlashCommands(params: {
   }
 
   const registerArgOptions = () => {
-    const optionsHandler = (
-      ctx.app as unknown as {
-        options?: (
-          actionId: string,
-          handler: (args: {
-            ack: (payload: { options: unknown[] }) => Promise<void>;
-            body: unknown;
-          }) => Promise<void>,
-        ) => void;
-      }
-    ).options;
-    if (typeof optionsHandler !== "function") {
+    const appWithOptions = ctx.app as unknown as {
+      options?: (
+        actionId: string,
+        handler: (args: {
+          ack: (payload: { options: unknown[] }) => Promise<void>;
+          body: unknown;
+        }) => Promise<void>,
+      ) => void;
+    };
+    if (typeof appWithOptions.options !== "function") {
       return;
     }
-    optionsHandler(SLACK_COMMAND_ARG_ACTION_ID, async ({ ack, body }) => {
+    appWithOptions.options(SLACK_COMMAND_ARG_ACTION_ID, async ({ ack, body }) => {
       const typedBody = body as {
         value?: string;
         user?: { id?: string };

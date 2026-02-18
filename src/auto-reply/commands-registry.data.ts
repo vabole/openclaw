@@ -174,10 +174,10 @@ function buildChatCommands(): ChatCommandDefinition[] {
     }),
     defineChatCommand({
       key: "allowlist",
+      nativeName: "allowlist",
       description: "List/add/remove allowlist entries.",
       textAlias: "/allowlist",
       acceptsArgs: true,
-      scope: "text",
       category: "management",
     }),
     defineChatCommand({
@@ -629,9 +629,9 @@ function buildChatCommands(): ChatCommandDefinition[] {
     }),
     defineChatCommand({
       key: "bash",
+      nativeName: "bash",
       description: "Run host shell commands (host-only).",
       textAlias: "/bash",
-      scope: "text",
       category: "tools",
       args: [
         {
