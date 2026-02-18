@@ -200,6 +200,30 @@ sync_origin_branch() {
   return 1
 }
 
+main_upstream_divergence_counts() {
+  local branch
+  branch="$(git -C "${REPO_ROOT}" branch --show-current 2>/dev/null || true)"
+  if [[ "${branch}" != "main" ]]; then
+    return 1
+  fi
+
+  if ! git -C "${REPO_ROOT}" rev-parse --verify refs/remotes/upstream/main >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local ahead behind
+  read -r ahead behind <<<"$(git -C "${REPO_ROOT}" rev-list --left-right --count "main...upstream/main" 2>/dev/null || printf '')"
+  if ! [[ "${ahead:-}" =~ ^[0-9]+$ ]] || ! [[ "${behind:-}" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  if (( ahead > 0 && behind > 0 )); then
+    printf '%s %s\n' "${ahead}" "${behind}"
+    return 0
+  fi
+  return 1
+}
+
 parse_update_json() {
   if ! resolve_node_bin; then
     log "node runtime not found; set OPENCLAW_NODE_BIN to parse update json"
@@ -460,6 +484,23 @@ MSG
   fi
 
   exit 0
+fi
+
+if [[ "${update_exit}" -ne 0 ]] && [[ "${status}" == "error" ]] && [[ "${reason}" == "rebase-failed" ]]; then
+  if divergence_counts="$(main_upstream_divergence_counts)"; then
+    read -r ahead_count behind_count <<<"${divergence_counts}"
+    log "rebase conflict on diverged main (ahead=${ahead_count} behind=${behind_count}); manual merge required"
+    diverged_message=$(cat <<MSG
+OpenClaw update paused on ${host_label}
+Reason: rebase conflict while local main diverges from upstream/main.
+Local main vs upstream/main: ahead=${ahead_count} behind=${behind_count}
+Action: merge/rebase upstream/main into local main manually, then rerun update.
+Log: ${RUN_LOG}
+MSG
+)
+    send_notification "${diverged_message}" || true
+    exit 0
+  fi
 fi
 
 log "update did not complete cleanly (exit=${update_exit} status=${status:-unknown} reason=${reason:-unknown})"
