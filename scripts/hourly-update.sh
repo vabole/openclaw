@@ -20,6 +20,11 @@ SYNC_ORIGIN_ON_SUCCESS="${OPENCLAW_SYNC_ORIGIN_ON_SUCCESS:-1}"
 SYNC_REMOTE="${OPENCLAW_SYNC_REMOTE:-origin}"
 SYNC_BRANCH="${OPENCLAW_SYNC_BRANCH:-main}"
 SYNC_FORCE_WITH_LEASE="${OPENCLAW_SYNC_FORCE_WITH_LEASE:-1}"
+CONFIG_PREFLIGHT_ENABLED="${OPENCLAW_CONFIG_PREFLIGHT_ENABLED:-1}"
+CONFIG_PREFLIGHT_PROBE_PATH="${OPENCLAW_CONFIG_PREFLIGHT_PROBE_PATH:-gateway.mode}"
+REBASE_AUTOFIX_ENABLED="${OPENCLAW_REBASE_AUTOFIX_ENABLED:-0}"
+REBASE_AUTOFIX_SCRIPT="${OPENCLAW_REBASE_AUTOFIX_SCRIPT:-${SCRIPT_DIR}/rebase-autofix-codex.sh}"
+REBASE_AUTOFIX_UPSTREAM_REF="${OPENCLAW_REBASE_AUTOFIX_UPSTREAM_REF:-upstream/main}"
 
 NOTIFY_CHANNEL="${OPENCLAW_NOTIFY_CHANNEL:-slack}"
 NOTIFY_TARGET="${OPENCLAW_NOTIFY_TARGET:-}"
@@ -36,6 +41,7 @@ RUN_TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${LOG_DIR}/${RUN_TS}"
 RUN_LOG="${RUN_DIR}/run.log"
 UPDATE_JSON="${RUN_DIR}/update-result.json"
+AUTOFIX_LOG="${RUN_DIR}/rebase-autofix.log"
 
 mkdir -p "${RUN_DIR}" "$(dirname -- "${LOCK_DIR}")"
 
@@ -139,6 +145,28 @@ should_sync_force_with_lease() {
   esac
 }
 
+should_config_preflight() {
+  case "${CONFIG_PREFLIGHT_ENABLED}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+should_rebase_autofix() {
+  case "${REBASE_AUTOFIX_ENABLED}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 resolve_node_bin() {
   if [[ -n "${NODE_BIN}" ]]; then
     return 0
@@ -156,6 +184,80 @@ resolve_node_bin() {
     return 0
   fi
   return 1
+}
+
+run_config_preflight() {
+  local probe_output=""
+  set +e
+  probe_output="$("${OPENCLAW_BIN}" config get "${CONFIG_PREFLIGHT_PROBE_PATH}" 2>&1)"
+  local probe_exit=$?
+  set -e
+
+  if [[ "${probe_exit}" -ne 0 ]]; then
+    printf '%s\n' "${probe_output}" >"${RUN_DIR}/config-preflight-error.log"
+    return 1
+  fi
+  return 0
+}
+
+run_openclaw_update() {
+  set +e
+  "${OPENCLAW_BIN}" update --json --no-restart --yes --timeout "${UPDATE_TIMEOUT_SECONDS}" >"${UPDATE_JSON}" 2>>"${RUN_LOG}"
+  update_exit=$?
+  set -e
+
+  IFS=$'\x1f' read -r status mode reason before_sha after_sha before_version after_version upstream_ref upstream_sha <<<"$(parse_update_json)"
+
+  short_before="${before_sha:0:8}"
+  short_after="${after_sha:0:8}"
+
+  changed="0"
+  if [[ -n "${before_sha}" ]] && [[ -n "${after_sha}" ]] && [[ "${before_sha}" != "${after_sha}" ]]; then
+    changed="1"
+  fi
+}
+
+run_rebase_autofix() {
+  if ! should_rebase_autofix; then
+    return 1
+  fi
+  if [[ ! -x "${REBASE_AUTOFIX_SCRIPT}" ]]; then
+    log "rebase autofix script missing or not executable: ${REBASE_AUTOFIX_SCRIPT}"
+    return 1
+  fi
+
+  log "attempting automated rebase conflict resolution via ${REBASE_AUTOFIX_SCRIPT}"
+  set +e
+  "${REBASE_AUTOFIX_SCRIPT}" \
+    --repo "${REPO_ROOT}" \
+    --upstream "${REBASE_AUTOFIX_UPSTREAM_REF}" \
+    --run-log "${RUN_LOG}" \
+    --result-log "${AUTOFIX_LOG}" >>"${RUN_LOG}" 2>&1
+  local autofix_exit=$?
+  set -e
+
+  if [[ "${autofix_exit}" -ne 0 ]]; then
+    log "rebase autofix failed (exit=${autofix_exit})"
+    return 1
+  fi
+
+  if [[ -n "$(git -C "${REPO_ROOT}" diff --name-only --diff-filter=U 2>/dev/null || true)" ]]; then
+    log "rebase autofix left unresolved conflicts"
+    return 1
+  fi
+
+  local ahead behind
+  read -r ahead behind <<<"$(git -C "${REPO_ROOT}" rev-list --left-right --count "main...${REBASE_AUTOFIX_UPSTREAM_REF}" 2>/dev/null || printf '')"
+  if ! [[ "${ahead:-}" =~ ^[0-9]+$ ]] || ! [[ "${behind:-}" =~ ^[0-9]+$ ]]; then
+    log "unable to validate divergence after rebase autofix"
+    return 1
+  fi
+  if (( behind > 0 )); then
+    log "rebase autofix completed but branch is still behind ${REBASE_AUTOFIX_UPSTREAM_REF} by ${behind} commit(s)"
+    return 1
+  fi
+
+  return 0
 }
 
 sync_origin_branch() {
@@ -372,21 +474,67 @@ acquire_lock
 log "starting hourly update (repo=${REPO_ROOT})"
 
 cd "${REPO_ROOT}"
-
-set +e
-"${OPENCLAW_BIN}" update --json --no-restart --yes --timeout "${UPDATE_TIMEOUT_SECONDS}" >"${UPDATE_JSON}" 2>>"${RUN_LOG}"
-update_exit=$?
-set -e
-
-IFS=$'\x1f' read -r status mode reason before_sha after_sha before_version after_version upstream_ref upstream_sha <<<"$(parse_update_json)"
-
 host_label="$(hostname -s 2>/dev/null || hostname || echo unknown-host)"
-short_before="${before_sha:0:8}"
-short_after="${after_sha:0:8}"
 
-changed="0"
-if [[ -n "${before_sha}" ]] && [[ -n "${after_sha}" ]] && [[ "${before_sha}" != "${after_sha}" ]]; then
-  changed="1"
+if should_config_preflight; then
+  if ! run_config_preflight; then
+    log "config preflight failed; skipping update"
+    config_error_preview="$(head -n 8 "${RUN_DIR}/config-preflight-error.log" 2>/dev/null || true)"
+    config_failure_message=$(cat <<MSG
+OpenClaw update preflight failed on ${host_label}
+Reason: config validation failed before update run.
+Probe: openclaw config get ${CONFIG_PREFLIGHT_PROBE_PATH}
+Action: run "openclaw doctor --fix" and rerun hourly update.
+Error preview:
+${config_error_preview}
+Log: ${RUN_LOG}
+MSG
+)
+    send_notification "${config_failure_message}" || true
+    exit 1
+  fi
+fi
+
+run_openclaw_update
+
+if [[ "${update_exit}" -ne 0 ]] && [[ "${status}" == "error" ]] && [[ "${reason}" == "rebase-failed" ]]; then
+  if divergence_counts="$(main_upstream_divergence_counts)"; then
+    read -r ahead_count behind_count <<<"${divergence_counts}"
+    if should_rebase_autofix; then
+      if run_rebase_autofix; then
+        log "rebase autofix succeeded; rerunning update verification"
+        run_openclaw_update
+        if [[ "${update_exit}" -eq 0 ]] && [[ "${status}" == "ok" ]]; then
+          log "update verification succeeded after rebase autofix"
+        else
+          log "update verification failed after rebase autofix (exit=${update_exit} status=${status:-unknown} reason=${reason:-unknown})"
+          autofix_verify_failure_message=$(cat <<MSG
+OpenClaw update auto-resolved rebase conflicts, but verification failed on ${host_label}
+Status: ${status:-unknown}
+Reason: ${reason:-unknown}
+Local main vs upstream/main before autofix: ahead=${ahead_count} behind=${behind_count}
+Autofix log: ${AUTOFIX_LOG}
+Run log: ${RUN_LOG}
+MSG
+)
+          send_notification "${autofix_verify_failure_message}" || true
+          exit 1
+        fi
+      else
+        autofix_failure_message=$(cat <<MSG
+OpenClaw update failed on ${host_label}
+Reason: rebase conflict and autofix policy did not resolve safely.
+Local main vs upstream/main: ahead=${ahead_count} behind=${behind_count}
+Action: review conflicts manually, then rerun update.
+Autofix log: ${AUTOFIX_LOG}
+Run log: ${RUN_LOG}
+MSG
+)
+        send_notification "${autofix_failure_message}" || true
+        exit 1
+      fi
+    fi
+  fi
 fi
 
 if [[ "${update_exit}" -eq 0 ]] && [[ "${status}" == "ok" ]]; then
