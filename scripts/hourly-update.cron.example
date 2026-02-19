@@ -13,6 +13,7 @@
 # - OPENCLAW_SYNC_FORCE_WITH_LEASE=1 to mirror local main even when remote diverged
 # - OPENCLAW_NODE_BIN when cron PATH does not include node (example: /opt/homebrew/bin/node)
 # - OPENCLAW_CONFIG_PREFLIGHT_ENABLED=1 to fail fast on invalid config before update
+# - OPENCLAW_UPDATE_SKIP_UI_BUILD=1 to skip ui:build during update
 # - OPENCLAW_REBASE_AUTOFIX_ENABLED=1 to run codex-based rebase autofix on rebase conflicts
 # - OPENCLAW_REBASE_AUTOFIX_SCRIPT to override resolver script path
 # - OPENCLAW_CODEX_BIN to override codex executable path
@@ -31,6 +32,7 @@ OPENCLAW_NOTIFY_ACCOUNT=default
 # OPENCLAW_SYNC_FORCE_WITH_LEASE=1
 # OPENCLAW_NODE_BIN=/opt/homebrew/bin/node
 # OPENCLAW_CONFIG_PREFLIGHT_ENABLED=1
+# OPENCLAW_UPDATE_SKIP_UI_BUILD=1
 # OPENCLAW_REBASE_AUTOFIX_ENABLED=1
 # OPENCLAW_REBASE_AUTOFIX_SCRIPT="${HOME}/repos/openclaw/scripts/rebase-autofix-codex.sh"
 # OPENCLAW_CODEX_BIN=/Users/vabole/.bun/bin/codex

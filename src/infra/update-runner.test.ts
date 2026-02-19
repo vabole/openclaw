@@ -245,6 +245,38 @@ describe("runGatewayUpdate", () => {
     expect(calls.some((call) => call === "pnpm ui:build")).toBe(false);
   });
 
+  it("skips ui build when OPENCLAW_UPDATE_SKIP_UI_BUILD is enabled", async () => {
+    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
+    await fs.rm(path.join(tempDir, "dist", "control-ui"), { recursive: true, force: true });
+    const stableTag = "v1.0.1-1";
+    const oldSkipUiBuild = process.env.OPENCLAW_UPDATE_SKIP_UI_BUILD;
+    process.env.OPENCLAW_UPDATE_SKIP_UI_BUILD = "1";
+    try {
+      const { runner, calls } = createRunner({
+        ...buildStableTagResponses(stableTag),
+        "pnpm install": { stdout: "" },
+        "pnpm build": { stdout: "" },
+        [`${process.execPath} ${path.join(tempDir, "openclaw.mjs")} doctor --non-interactive --fix`]:
+          {
+            stdout: "",
+          },
+      });
+
+      const result = await runWithRunner(runner, { channel: "stable" });
+
+      expect(result.status).toBe("ok");
+      expect(calls.some((call) => call === "pnpm ui:build")).toBe(false);
+      expect(result.steps.some((step) => step.name === "ui:build (skipped)")).toBe(true);
+      expect(result.steps.some((step) => step.name === "ui assets verify (skipped)")).toBe(true);
+    } finally {
+      if (oldSkipUiBuild === undefined) {
+        delete process.env.OPENCLAW_UPDATE_SKIP_UI_BUILD;
+      } else {
+        process.env.OPENCLAW_UPDATE_SKIP_UI_BUILD = oldSkipUiBuild;
+      }
+    }
+  });
+
   it("uses stable tag when beta tag is older than release", async () => {
     await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
     await setupUiIndex();

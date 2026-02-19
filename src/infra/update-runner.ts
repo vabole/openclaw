@@ -7,6 +7,7 @@ import {
   resolveControlUiDistIndexPathForRoot,
 } from "./control-ui-assets.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
+import { isTruthyEnvValue } from "./env.js";
 import { readPackageName, readPackageVersion } from "./package-json.js";
 import { trimLogTail } from "./restart-sentinel.js";
 import {
@@ -81,6 +82,7 @@ type UpdateRunnerOptions = {
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const MAX_LOG_CHARS = 8000;
 const PREFLIGHT_MAX_COMMITS = 10;
+const SKIP_UI_BUILD_ENV = "OPENCLAW_UPDATE_SKIP_UI_BUILD";
 const START_DIRS = ["cwd", "argv1", "process"];
 const DEFAULT_PACKAGE_NAME = "openclaw";
 const CORE_PACKAGE_NAMES = new Set([DEFAULT_PACKAGE_NAME]);
@@ -702,6 +704,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     }
 
     const manager = await detectPackageManager(gitRoot);
+    const skipUiBuild = isTruthyEnvValue(process.env[SKIP_UI_BUILD_ENV]);
 
     const depsStep = await runStep(step("deps install", managerInstallArgs(manager), gitRoot));
     steps.push(depsStep);
@@ -731,20 +734,31 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       };
     }
 
-    const uiBuildStep = await runStep(
-      step("ui:build", managerScriptArgs(manager, "ui:build"), gitRoot),
-    );
-    steps.push(uiBuildStep);
-    if (uiBuildStep.exitCode !== 0) {
-      return {
-        status: "error",
-        mode: "git",
-        root: gitRoot,
-        reason: "ui-build-failed",
-        before: { sha: beforeSha, version: beforeVersion },
-        steps,
-        durationMs: Date.now() - startedAt,
-      };
+    if (skipUiBuild) {
+      steps.push({
+        name: "ui:build (skipped)",
+        command: managerScriptArgs(manager, "ui:build").join(" "),
+        cwd: gitRoot,
+        durationMs: 0,
+        exitCode: 0,
+        stdoutTail: `${SKIP_UI_BUILD_ENV}=1`,
+      });
+    } else {
+      const uiBuildStep = await runStep(
+        step("ui:build", managerScriptArgs(manager, "ui:build"), gitRoot),
+      );
+      steps.push(uiBuildStep);
+      if (uiBuildStep.exitCode !== 0) {
+        return {
+          status: "error",
+          mode: "git",
+          root: gitRoot,
+          reason: "ui-build-failed",
+          before: { sha: beforeSha, version: beforeVersion },
+          steps,
+          durationMs: Date.now() - startedAt,
+        };
+      }
     }
 
     const doctorEntry = path.join(gitRoot, "openclaw.mjs");
@@ -782,53 +796,66 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
 
     const uiIndexHealth = await resolveControlUiDistIndexHealth({ root: gitRoot });
     if (!uiIndexHealth.exists) {
-      const repairArgv = managerScriptArgs(manager, "ui:build");
-      const started = Date.now();
-      const repairResult = await runCommand(repairArgv, { cwd: gitRoot, timeoutMs });
-      const repairStep: UpdateStepResult = {
-        name: "ui:build (post-doctor repair)",
-        command: repairArgv.join(" "),
-        cwd: gitRoot,
-        durationMs: Date.now() - started,
-        exitCode: repairResult.code,
-        stdoutTail: trimLogTail(repairResult.stdout, MAX_LOG_CHARS),
-        stderrTail: trimLogTail(repairResult.stderr, MAX_LOG_CHARS),
-      };
-      steps.push(repairStep);
-
-      if (repairResult.code !== 0) {
-        return {
-          status: "error",
-          mode: "git",
-          root: gitRoot,
-          reason: repairStep.name,
-          before: { sha: beforeSha, version: beforeVersion },
-          steps,
-          durationMs: Date.now() - startedAt,
-        };
-      }
-
-      const repairedUiIndexHealth = await resolveControlUiDistIndexHealth({ root: gitRoot });
-      if (!repairedUiIndexHealth.exists) {
+      if (skipUiBuild) {
         const uiIndexPath =
-          repairedUiIndexHealth.indexPath ?? resolveControlUiDistIndexPathForRoot(gitRoot);
+          uiIndexHealth.indexPath ?? resolveControlUiDistIndexPathForRoot(gitRoot);
         steps.push({
-          name: "ui assets verify",
+          name: "ui assets verify (skipped)",
           command: `verify ${uiIndexPath}`,
           cwd: gitRoot,
           durationMs: 0,
-          exitCode: 1,
-          stderrTail: `missing ${uiIndexPath}`,
+          exitCode: 0,
+          stdoutTail: `${SKIP_UI_BUILD_ENV}=1`,
         });
-        return {
-          status: "error",
-          mode: "git",
-          root: gitRoot,
-          reason: "ui-assets-missing",
-          before: { sha: beforeSha, version: beforeVersion },
-          steps,
-          durationMs: Date.now() - startedAt,
+      } else {
+        const repairArgv = managerScriptArgs(manager, "ui:build");
+        const started = Date.now();
+        const repairResult = await runCommand(repairArgv, { cwd: gitRoot, timeoutMs });
+        const repairStep: UpdateStepResult = {
+          name: "ui:build (post-doctor repair)",
+          command: repairArgv.join(" "),
+          cwd: gitRoot,
+          durationMs: Date.now() - started,
+          exitCode: repairResult.code,
+          stdoutTail: trimLogTail(repairResult.stdout, MAX_LOG_CHARS),
+          stderrTail: trimLogTail(repairResult.stderr, MAX_LOG_CHARS),
         };
+        steps.push(repairStep);
+
+        if (repairResult.code !== 0) {
+          return {
+            status: "error",
+            mode: "git",
+            root: gitRoot,
+            reason: repairStep.name,
+            before: { sha: beforeSha, version: beforeVersion },
+            steps,
+            durationMs: Date.now() - startedAt,
+          };
+        }
+
+        const repairedUiIndexHealth = await resolveControlUiDistIndexHealth({ root: gitRoot });
+        if (!repairedUiIndexHealth.exists) {
+          const uiIndexPath =
+            repairedUiIndexHealth.indexPath ?? resolveControlUiDistIndexPathForRoot(gitRoot);
+          steps.push({
+            name: "ui assets verify",
+            command: `verify ${uiIndexPath}`,
+            cwd: gitRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: `missing ${uiIndexPath}`,
+          });
+          return {
+            status: "error",
+            mode: "git",
+            root: gitRoot,
+            reason: "ui-assets-missing",
+            before: { sha: beforeSha, version: beforeVersion },
+            steps,
+            durationMs: Date.now() - startedAt,
+          };
+        }
       }
     }
 
